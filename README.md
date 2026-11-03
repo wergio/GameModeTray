@@ -4,7 +4,7 @@ A small Windows system tray app that automatically turns on the **game mode**
 (low-latency mode) of your Bluetooth headphones every time they connect to the
 PC with RFCOMM. Many headphones forget the setting whenever they are switched off.
 
-**It ships only with a profile for the Edifier X2s**. Other headphones can be added
+**It ships with profiles for the Edifier X2s and the realme Buds T200 Lite**. Other headphones can be added
 from the Advanced device settings window, by entering the bytes their companion app sends: the guide below shows how to find them.
 
 ## Requirements
@@ -39,6 +39,9 @@ mode is turned on within a few seconds.
 - On connection it waits, opens an RFCOMM socket on the configured channel,
   sends the ON command and checks the state replies, retrying if needed; on
   failure it shows a notification.
+- With "enable automatically on connect" turned off it changes nothing and only
+  reads the current state (when the profile has a state query and replies), so
+  the icon still shows whether game mode is on.
 
 ## Advanced device settings
 
@@ -75,6 +78,7 @@ needed.
 | headphones | file |
 |---|---|
 | Edifier X2s | [`edifier-x2s.json`](profiles/edifier-x2s.json) |
+| realme Buds T200 Lite | [`realme-buds-t200-lite.json`](profiles/realme-buds-t200-lite.json) |
 
 Got it working with other headphones? Export the profile and open a pull request
 adding it to `profiles/`: it will be offered as a preset from the next release.
@@ -138,6 +142,11 @@ the packet shows the **channel**. Right after each command, the headphones
 usually answer with a confirmation or with their new state: that gives you the
 state replies. Packets the app sends once at startup are often state queries.
 
+If no packet repeats exactly, look for one byte that grows by one with every
+message the app sends: it is a sequence number, and the ON/OFF packets are the
+ones that are equal apart from it. Many headphones only echo it back, so a fixed
+value works (try it with **Test ON**); the realme example below is one of them.
+
 If nothing shows up in RFCOMM but you see ATT writes
 (`btatt.opcode == 0x12 || btatt.opcode == 0x52`), the headphones use BLE GATT,
 which this app does not support yet.
@@ -168,6 +177,30 @@ AA EC <cmd> <data length, 2 bytes BE> <data> <checksum>
 
 Other Edifier models may use the same framing with different command codes.
 
+### Example: realme Buds T200 Lite
+
+The realme Link app uses RFCOMM channel 1 (SPP) with this framing, and no
+checksum:
+
+```
+AA <length of the rest> <direction, 2 bytes> <cmd> <type> <seq> <data length, 2 bytes LE> <data>
+```
+
+- direction `00 00` = host -> headphones, `04 00` = headphones -> host
+- `seq` grows by one with every message from the app, but the headphones only
+  echo it back: the profile always sends `00`
+- setting `06` is game mode; the app writes it with cmd `03` type `04` and
+  reads settings with cmd `0D` type `01`
+
+| command | bytes |
+|---|---|
+| game mode ON | `AA 09 00 00 03 04 00 02 00 06 01` |
+| game mode OFF | `AA 09 00 00 03 04 00 02 00 06 00` |
+| read state | `AA 09 00 00 0D 01 00 02 00 01 06` → reply `AA 0B 04 00 0D 81 <seq> 04 00 00 01 06 <01/00>` |
+
+After a write the headphones also send `AA 0A 04 00 03 05 <seq> 03 00 01 06 <01/00>`
+on their own.
+
 ## Build
 
 Requires the .NET 10 SDK.
@@ -181,7 +214,7 @@ WinRT API projection).
 
 ## Disclaimer
 
-This is an unofficial project, not affiliated with or endorsed by Edifier or
+This is an unofficial project, not affiliated with or endorsed by Edifier, realme or
 any other headphone maker. Trademarks belong to their respective owners. The
 protocols were worked out by observing the Bluetooth traffic of the official
 apps; use it at your own risk.

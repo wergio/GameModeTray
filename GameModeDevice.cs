@@ -37,6 +37,9 @@ sealed class GameModeDevice
     /// <summary>True when the profile describes the state replies, so a command can be confirmed.</summary>
     public bool CanVerify => _onReply is not null || _offReply is not null;
 
+    /// <summary>True when the profile can ask the headphones for their current state.</summary>
+    public bool CanReadState => _query is not null && CanVerify;
+
     /// <summary>
     /// Sends the ON/OFF command and returns the state the headphones report, or null
     /// when no reply matched (always null if the profile has no state replies).

@@ -178,7 +178,50 @@ sealed class TrayContext : ApplicationContext
         _gameMode = null;
         _error = null;
         UpdateTray();
-        if (apply && Connected && _auto.Checked) _ = ApplyAsync(true, automatic: true);
+        if (!Connected) return;
+        if (apply && _auto.Checked) _ = ApplyAsync(true, automatic: true);
+        // Not changing anything: just find out the current state, for the icon
+        else _ = ReadStateAsync(waitForConnection: apply);
+    }
+
+    async Task ReadStateAsync(bool waitForConnection)
+    {
+        var device = _gameDevice;
+        if (device is null || !device.CanReadState) return;
+        // Waits outside the lock, so a menu command in the meantime is not ignored
+        if (waitForConnection) await Task.Delay(_settings.Profile.ConnectDelayMs);
+
+        int attempts = Math.Max(1, _settings.Profile.Attempts);
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            // Stop when the headphones went away, or a command already set the state
+            if (device != _gameDevice || !Connected || _gameMode is not null) return;
+            if (!await _busy.WaitAsync(0)) return;
+            string? error;
+            try
+            {
+                bool? state = await Task.Run(device.ReadState);
+                error = state is null ? "no state reply from the headphones" : null;
+                if (state is not null && device == _gameDevice && Connected)
+                {
+                    _gameMode = state;
+                    _verified = true;
+                    Log.Write($"Game mode is {(state.Value ? "ON" : "OFF")} (read on connect)");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+            finally
+            {
+                _busy.Release();
+                UpdateTray();
+            }
+            Log.Write($"Attempt {attempt} to read the state failed: {error}");
+            if (attempt < attempts) await Task.Delay(RetryDelayMs);
+        }
     }
 
     async Task ApplyAsync(bool on, bool automatic)
@@ -211,8 +254,8 @@ sealed class TrayContext : ApplicationContext
                         _gameMode = on;
                         _verified = state is not null;
                         _error = null;
+                        // No notification on success: the icon colour shows it
                         Log.Write($"Game mode {(on ? "ON" : "OFF")}{(_verified ? "" : " (not verified)")} (attempt {attempt})");
-                        if (automatic) Notify("Game mode enabled.", ToolTipIcon.Info);
                         return;
                     }
                     _error = state is null ? "no state reply from the headphones" : "the headphones did not change state";
