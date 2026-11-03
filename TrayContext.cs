@@ -2,6 +2,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using Microsoft.Win32;
 using Windows.Devices.Bluetooth;
+using Windows.Devices.Enumeration;
 
 namespace EdifierGameMode;
 
@@ -11,7 +12,7 @@ namespace EdifierGameMode;
 /// </summary>
 sealed class TrayContext : ApplicationContext
 {
-    const ulong Address = 0xCC14BC9D87F9;     // EDIFIER X2s, classic Bluetooth
+    const string DeviceName = "EDIFIER X2s";  // name of the paired classic Bluetooth device
     const int ConnectDelayMs = 3000;          // give the earbuds time to set up the audio link
     const int Attempts = 3;
     const int RetryDelayMs = 2000;
@@ -28,11 +29,11 @@ sealed class TrayContext : ApplicationContext
     readonly Icon _iconOn = MakeIcon(Color.FromArgb(46, 160, 67));
     readonly Icon _iconWarn = MakeIcon(Color.FromArgb(230, 126, 34));
 
-    readonly X2sClient _client = new(Address);
     readonly SemaphoreSlim _busy = new(1, 1);
     readonly SynchronizationContext _ui;
 
     BluetoothDevice? _device;
+    X2sClient? _client;
     bool _initDone;
     bool _sending;
     bool? _gameMode;     // null = state unknown
@@ -74,7 +75,10 @@ sealed class TrayContext : ApplicationContext
     {
         try
         {
-            _device = await BluetoothDevice.FromBluetoothAddressAsync(Address);
+            // Look the earbuds up among the paired devices by name, so no address is hard-coded
+            var paired = await DeviceInformation.FindAllAsync(BluetoothDevice.GetDeviceSelectorFromPairingState(true));
+            var info = paired.FirstOrDefault(d => d.Name.StartsWith(DeviceName, StringComparison.OrdinalIgnoreCase));
+            if (info is not null) _device = await BluetoothDevice.FromIdAsync(info.Id);
         }
         catch (Exception ex)
         {
@@ -84,10 +88,13 @@ sealed class TrayContext : ApplicationContext
 
         if (_device is null)
         {
-            _error = "EDIFIER X2s not paired with this PC (or Bluetooth is off)";
+            _error = $"{DeviceName} not paired with this PC (or Bluetooth is off)";
+            Log.Write(_error);
             UpdateTray();
             return;
         }
+        _client = new X2sClient(_device.BluetoothAddress);
+        Log.Write($"Found {_device.Name} ({_device.BluetoothAddress:X12})");
         // The event is raised on a thread-pool thread: marshal back to the UI thread
         _device.ConnectionStatusChanged += (_, _) => _ui.Post(_ => OnConnectionChanged(), null);
         OnConnectionChanged();
@@ -111,6 +118,7 @@ sealed class TrayContext : ApplicationContext
         }
         if (!await _busy.WaitAsync(0)) return;
 
+        var client = _client!;   // set together with _device, which Connected requires
         string action = on ? "enable" : "disable";
         try
         {
@@ -123,7 +131,7 @@ sealed class TrayContext : ApplicationContext
             {
                 try
                 {
-                    _gameMode = await Task.Run(() => _client.SetGameMode(on));
+                    _gameMode = await Task.Run(() => client.SetGameMode(on));
                     if (_gameMode == on)
                     {
                         _error = null;
