@@ -2,83 +2,141 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using Microsoft.Win32;
 using Windows.Devices.Bluetooth;
-using Windows.Devices.Enumeration;
+using Windows.Foundation;
 
-namespace EdifierGameMode;
+namespace GameModeTray;
 
 /// <summary>
-/// System tray icon: when the X2s connect it enables game mode, checks that it
-/// is actually on and retries if needed.
+/// System tray icon: when the configured headphones connect it enables game mode,
+/// checks that it is actually on (when the profile allows it) and retries if needed.
 /// </summary>
 sealed class TrayContext : ApplicationContext
 {
-    const string DeviceName = "EDIFIER X2s";  // name of the paired classic Bluetooth device
-    const int ConnectDelayMs = 3000;          // give the earbuds time to set up the audio link
-    const int Attempts = 3;
     const int RetryDelayMs = 2000;
-
-    const string AppName = "EdifierGameMode";
+    const string AppName = "GameModeTray";
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    const string SettingsKey = @"Software\EdifierGameMode";
 
     readonly NotifyIcon _tray = new();
+    readonly ToolStripLabel _title = new();
     readonly ToolStripMenuItem _status = new() { Enabled = false };
+    readonly ToolStripMenuItem _offItem;
     readonly ToolStripMenuItem _auto = new("Enable automatically on connect") { CheckOnClick = true };
     readonly ToolStripMenuItem _startup = new("Start with Windows") { CheckOnClick = true };
     readonly Icon _iconIdle = MakeIcon(Color.FromArgb(128, 128, 128));
     readonly Icon _iconOn = MakeIcon(Color.FromArgb(46, 160, 67));
     readonly Icon _iconWarn = MakeIcon(Color.FromArgb(230, 126, 34));
 
+    readonly AppSettings _settings;
+    readonly bool _firstRun;
     readonly SemaphoreSlim _busy = new(1, 1);
     readonly SynchronizationContext _ui;
+    readonly TypedEventHandler<BluetoothDevice, object> _connectionChanged;
 
     BluetoothDevice? _device;
-    X2sClient? _client;
+    GameModeDevice? _gameDevice;
+    SettingsForm? _settingsForm;
     bool _initDone;
     bool _sending;
+    bool _verified;
     bool? _gameMode;     // null = state unknown
     string? _error;
 
-    public TrayContext()
+    public TrayContext(bool openSettings)
     {
+        var saved = AppSettings.Load();
+        _firstRun = saved is null;
+        _settings = saved ?? new AppSettings();
+
         _ui = new WindowsFormsSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(_ui);
+        // The event is raised on a thread-pool thread: marshal back to the UI thread
+        _connectionChanged = (_, _) => _ui.Post(_ => OnConnectionChanged(apply: true), null);
 
+        _offItem = new ToolStripMenuItem("Turn game mode off", null, (_, _) => _ = ApplyAsync(false, automatic: false));
         var menu = new ContextMenuStrip();
+        _title.Font = new Font(menu.Font, FontStyle.Bold);
+        menu.Items.Add(_title);
         menu.Items.Add(_status);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Turn game mode on", null, (_, _) => _ = ApplyAsync(true, automatic: false));
-        menu.Items.Add("Turn game mode off", null, (_, _) => _ = ApplyAsync(false, automatic: false));
+        menu.Items.Add(_offItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_auto);
         menu.Items.Add(_startup);
+        menu.Items.Add("Advanced device settings...", null, (_, _) => OpenSettings());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitThread());
 
-        _auto.Checked = ReadAutoSetting();
-        _auto.CheckedChanged += (_, _) => SaveAutoSetting(_auto.Checked);
+        _auto.Checked = _settings.AutoEnable;
+        _auto.CheckedChanged += (_, _) => { _settings.AutoEnable = _auto.Checked; _settings.Save(); };
         _startup.Checked = IsInStartup();
         _startup.CheckedChanged += (_, _) => SetStartup(_startup.Checked);
 
         _tray.ContextMenuStrip = menu;
         _tray.DoubleClick += (_, _) => _ = ApplyAsync(true, automatic: false);
+        // Notifications about a missing or invalid profile lead to the settings
+        _tray.BalloonTipClicked += (_, _) => { if (_gameDevice is null) OpenSettings(); };
         _tray.Visible = true;
-        UpdateTray();
 
         Log.Write("Started");
-        _ = InitAsync();
+        _ = StartAsync(openSettings);
     }
 
     bool Connected => _device?.ConnectionStatus == BluetoothConnectionStatus.Connected;
+    string Title => _settings.Profile.Name.Length > 0 ? _settings.Profile.Name : AppName;
 
-    async Task InitAsync()
+    async Task StartAsync(bool openSettings)
+    {
+        if (_firstRun) await PickPresetAsync();
+        await InitAsync(applyIfConnected: true);
+        // Nothing configured yet (first run with headphones that have no preset): ask the user
+        if (openSettings || _settings.Profile.DeviceName.Trim().Length == 0) OpenSettings();
+    }
+
+    /// <summary>On the first run, uses the preset of headphones already paired with the PC, if any.</summary>
+    async Task PickPresetAsync()
     {
         try
         {
-            // Look the earbuds up among the paired devices by name, so no address is hard-coded
-            var paired = await DeviceInformation.FindAllAsync(BluetoothDevice.GetDeviceSelectorFromPairingState(true));
-            var info = paired.FirstOrDefault(d => d.Name.StartsWith(DeviceName, StringComparison.OrdinalIgnoreCase));
-            if (info is not null) _device = await BluetoothDevice.FromIdAsync(info.Id);
+            var preset = await PairedDevices.FindPresetAsync(Profile.Presets);
+            if (preset is null)
+            {
+                Log.Write("First run: no paired headphones match a preset");
+                return;
+            }
+            _settings.Profile = preset;
+            _settings.Save();
+            Log.Write($"First run: using the \"{preset.Name}\" preset");
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Preset detection: " + ex.Message);
+        }
+    }
+
+    /// <summary>Finds the profile's device and starts watching its connection.</summary>
+    async Task InitAsync(bool applyIfConnected)
+    {
+        if (_device is not null) _device.ConnectionStatusChanged -= _connectionChanged;
+        _device = null;
+        _gameDevice = null;
+        _initDone = false;
+        _gameMode = null;
+        _error = null;
+        var profile = _settings.Profile;
+        _offItem.Enabled = profile.OffCommand.Trim().Length > 0;
+        UpdateTray();
+
+        if (profile.DeviceName.Trim().Length == 0)
+        {
+            _initDone = true;
+            _error = "No headphones configured yet";
+            UpdateTray();
+            return;
+        }
+        try
+        {
+            _device = await PairedDevices.FindAsync(profile.DeviceName);
         }
         catch (Exception ex)
         {
@@ -88,65 +146,83 @@ sealed class TrayContext : ApplicationContext
 
         if (_device is null)
         {
-            _error = $"{DeviceName} not paired with this PC (or Bluetooth is off)";
-            Log.Write(_error);
-            UpdateTray();
+            Fail($"\"{profile.DeviceName}\" is not paired with this PC (or Bluetooth is off)");
             return;
         }
-        _client = new X2sClient(_device.BluetoothAddress);
-        Log.Write($"Found {_device.Name} ({_device.BluetoothAddress:X12})");
-        // The event is raised on a thread-pool thread: marshal back to the UI thread
-        _device.ConnectionStatusChanged += (_, _) => _ui.Post(_ => OnConnectionChanged(), null);
-        OnConnectionChanged();
+        try
+        {
+            _gameDevice = new GameModeDevice(profile, _device.BluetoothAddress, Log.Write);
+        }
+        catch (FormatException ex)
+        {
+            Fail("Invalid profile: " + ex.Message);
+            return;
+        }
+
+        Log.Write($"Found {_device.Name} ({_device.BluetoothAddress:X12}), profile \"{profile.Name}\"");
+        _device.ConnectionStatusChanged += _connectionChanged;
+        OnConnectionChanged(applyIfConnected);
     }
 
-    void OnConnectionChanged()
+    void Fail(string error)
     {
-        Log.Write(Connected ? "Earbuds connected" : "Earbuds not connected");
+        _error = error;
+        Log.Write(error);
+        UpdateTray();
+        Notify(error + ". Click here to open the settings.", ToolTipIcon.Warning);
+    }
+
+    void OnConnectionChanged(bool apply)
+    {
+        Log.Write(Connected ? "Headphones connected" : "Headphones not connected");
         _gameMode = null;
         _error = null;
         UpdateTray();
-        if (Connected && _auto.Checked) _ = ApplyAsync(true, automatic: true);
+        if (apply && Connected && _auto.Checked) _ = ApplyAsync(true, automatic: true);
     }
 
     async Task ApplyAsync(bool on, bool automatic)
     {
-        if (!Connected)
+        var device = _gameDevice;
+        if (device is null || !Connected)
         {
-            if (!automatic) Notify("The earbuds are not connected.", ToolTipIcon.Warning);
+            if (!automatic) Notify(device is null ? _error ?? "No headphones configured." : "The headphones are not connected.", ToolTipIcon.Warning);
             return;
         }
         if (!await _busy.WaitAsync(0)) return;
 
-        var client = _client!;   // set together with _device, which Connected requires
         string action = on ? "enable" : "disable";
         try
         {
             _sending = true;
             _error = null;
             UpdateTray();
-            if (automatic) await Task.Delay(ConnectDelayMs);
+            if (automatic) await Task.Delay(_settings.Profile.ConnectDelayMs);
 
-            for (int attempt = 1; attempt <= Attempts && Connected; attempt++)
+            int attempts = Math.Max(1, _settings.Profile.Attempts);
+            for (int attempt = 1; attempt <= attempts && Connected; attempt++)
             {
                 try
                 {
-                    _gameMode = await Task.Run(() => client.SetGameMode(on));
-                    if (_gameMode == on)
+                    bool? state = await Task.Run(() => device.SetGameMode(on));
+                    // Without state replies in the profile, a command sent without errors counts as done
+                    if (state == on || (state is null && !device.CanVerify))
                     {
+                        _gameMode = on;
+                        _verified = state is not null;
                         _error = null;
-                        Log.Write($"Game mode {(on ? "ON" : "OFF")} (attempt {attempt})");
+                        Log.Write($"Game mode {(on ? "ON" : "OFF")}{(_verified ? "" : " (not verified)")} (attempt {attempt})");
                         if (automatic) Notify("Game mode enabled.", ToolTipIcon.Info);
                         return;
                     }
-                    _error = "the earbuds did not change state";
+                    _error = state is null ? "no state reply from the headphones" : "the headphones did not change state";
                 }
                 catch (Exception ex)
                 {
                     _error = ex.Message;
                 }
                 Log.Write($"Attempt {attempt} to {action} failed: {_error}");
-                if (attempt < Attempts) await Task.Delay(RetryDelayMs);
+                if (attempt < attempts) await Task.Delay(RetryDelayMs);
             }
             if (Connected) Notify($"Could not {action} game mode: {_error}", ToolTipIcon.Warning);
         }
@@ -158,38 +234,48 @@ sealed class TrayContext : ApplicationContext
         }
     }
 
+    void OpenSettings()
+    {
+        if (_settingsForm is not null)
+        {
+            _settingsForm.Activate();
+            return;
+        }
+        var form = new SettingsForm(_settings.Profile, _iconOn);
+        form.FormClosed += (_, _) =>
+        {
+            _settingsForm = null;
+            if (form.DialogResult != DialogResult.OK) return;
+            _settings.Profile = form.Result;
+            _settings.Save();
+            Log.Write($"Settings saved, profile \"{form.Result.Name}\"");
+            _ = InitAsync(applyIfConnected: false);
+        };
+        _settingsForm = form;
+        form.Show();
+    }
+
     void UpdateTray()
     {
         (string text, Icon icon) = this switch
         {
-            { _initDone: false } => ("Looking for earbuds...", _iconIdle),
-            { _device: null } => (_error ?? "Earbuds not found", _iconWarn),
-            { Connected: false } => ("Earbuds not connected", _iconIdle),
+            { _initDone: false } => ("Looking for the headphones...", _iconIdle),
+            { _gameDevice: null } => (_error ?? "Headphones not found", _iconWarn),
+            { Connected: false } => ("Headphones not connected", _iconIdle),
             { _sending: true } => ("Sending command...", _iconIdle),
             { _error: not null } => ("Error: " + _error, _iconWarn),
-            { _gameMode: true } => ("Game mode ON", _iconOn),
+            { _gameMode: true } => (_verified ? "Game mode ON" : "Game mode ON (not verified)", _iconOn),
             { _gameMode: false } => ("Game mode OFF", _iconWarn),
-            _ => ("Earbuds connected", _iconIdle),
+            _ => ("Headphones connected", _iconIdle),
         };
+        _title.Text = Title;
         _status.Text = text;
         _tray.Icon = icon;
-        string tip = "Edifier X2s - " + text;
+        string tip = $"{Title} - {text}";
         _tray.Text = tip.Length > 127 ? tip[..127] : tip;
     }
 
-    void Notify(string text, ToolTipIcon icon) => _tray.ShowBalloonTip(4000, "Edifier X2s", text, icon);
-
-    static bool ReadAutoSetting()
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(SettingsKey);
-        return key?.GetValue("Auto") is not int value || value != 0;
-    }
-
-    static void SaveAutoSetting(bool enabled)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
-        key.SetValue("Auto", enabled ? 1 : 0, RegistryValueKind.DWord);
-    }
+    void Notify(string text, ToolTipIcon icon) => _tray.ShowBalloonTip(4000, Title, text, icon);
 
     static bool IsInStartup()
     {

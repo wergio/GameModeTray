@@ -1,0 +1,13 @@
+{
+  "name": "Edifier X2s",
+  "deviceName": "EDIFIER X2s",
+  "transport": "rfcomm",
+  "channel": 2,
+  "onCommand": "AA EC 09 00 01 01 A1",
+  "offCommand": "AA EC 09 00 01 00 A0",
+  "stateQuery": "AA EC 08 00 00 9E",
+  "stateOnReply": "BB EC 08 00 02 01 ?? ??",
+  "stateOffReply": "BB EC 08 00 02 00 ?? ??",
+  "connectDelayMs": 3000,
+  "attempts": 3
+}

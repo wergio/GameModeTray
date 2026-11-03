@@ -7,11 +7,16 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>EdifierGameMode</AssemblyName>
-    <RootNamespace>EdifierGameMode</RootNamespace>
+    <AssemblyName>GameModeTray</AssemblyName>
+    <RootNamespace>GameModeTray</RootNamespace>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Ready-made headphone profiles, offered as presets in the settings -->
+    <EmbeddedResource Include="profiles\*.json" LogicalName="profiles.%(Filename)%(Extension)" />
+  </ItemGroup>
 
 </Project>

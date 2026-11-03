@@ -1,23 +1,23 @@
-namespace EdifierGameMode;
+namespace GameModeTray;
 
 static class Program
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
         // Single instance: a second launch (e.g. double-clicking the exe) exits immediately
-        using var mutex = new Mutex(true, @"Local\EdifierGameModeTray", out bool first);
+        using var mutex = new Mutex(true, @"Local\GameModeTray", out bool first);
         if (!first) return;
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayContext());
+        Application.Run(new TrayContext(openSettings: args.Contains("--settings")));
     }
 }
 
-/// <summary>Minimal log in %LOCALAPPDATA%\EdifierGameMode\log.txt, handy when something goes wrong.</summary>
+/// <summary>Minimal log in %LOCALAPPDATA%\GameModeTray\log.txt, handy when something goes wrong.</summary>
 static class Log
 {
-    static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EdifierGameMode");
+    static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameModeTray");
     static readonly string FilePath = Path.Combine(Dir, "log.txt");
     static readonly object Gate = new();
 
