@@ -4,7 +4,7 @@ A small Windows system tray app that automatically turns on the **game mode**
 (low-latency mode) of your Bluetooth headphones every time they connect to the
 PC with RFCOMM. Many headphones forget the setting whenever they are switched off.
 
-**It ships with profiles for the Edifier X2s and the realme Buds T200 Lite**. Other headphones can be added
+**It ships with profiles for the Edifier X2s and the Realme Buds T200 Lite**. Other headphones can be added
 from the Advanced device settings window, by entering the bytes their companion app sends: the guide below shows how to find them.
 
 ## Requirements
@@ -12,7 +12,7 @@ from the Advanced device settings window, by entering the bytes their companion 
 - Windows 10 version 2004 (build 19041) or later, with Bluetooth
 - [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Headphones paired with the PC whose companion app talks over classic
-  Bluetooth RFCOMM (SPP). BLE GATT is not supported yet (ask me if you need it).
+  Bluetooth RFCOMM (SPP). BLE GATT is not supported yet (ask me if you need it, but I don't own any headphones using BLE GATT).
 
 ## Usage
 
@@ -27,7 +27,6 @@ mode is turned on within a few seconds.
 - Menu (right click): headphones name and state, turn game mode on/off, enable
   automatically on connect, start with Windows, advanced device settings, exit.
   Double click = turn on.
-- `GameModeTray.exe --settings` opens the advanced device settings at startup.
 - Settings are stored in `%APPDATA%\GameModeTray\settings.json`, the log in
   `%LOCALAPPDATA%\GameModeTray\log.txt`.
 
@@ -44,6 +43,8 @@ mode is turned on within a few seconds.
   the icon still shows whether game mode is on.
 
 ## Advanced device settings
+
+In this menu you can specify a different or custom headphone configuration
 
 | field | meaning |
 |---|---|
@@ -73,7 +74,7 @@ load and save a profile as JSON.
 
 Ready-made profiles are in [`profiles/`](profiles/). They are built into the
 exe: pick yours from **Preset** in the advanced device settings, no download
-needed.
+needed. Currently supported headphones:
 
 | headphones | file |
 |---|---|
@@ -83,12 +84,13 @@ needed.
 Got it working with other headphones? Export the profile and open a pull request
 adding it to `profiles/`: it will be offered as a preset from the next release.
 
-## Adding support for other headphones
+## How to add support for other headphones
 
 The idea: record the Bluetooth traffic while the official app toggles game mode,
 then find the bytes that change. You need an Android phone, the headphones'
 companion app, [Wireshark](https://www.wireshark.org/) and
 [adb](https://developer.android.com/tools/releases/platform-tools) on the PC.
+You can use agentic AI (like Claude Code) to do this procedure for you.
 
 ### 1. Turn on the Bluetooth log on the phone
 
@@ -151,7 +153,7 @@ If nothing shows up in RFCOMM but you see ATT writes
 (`btatt.opcode == 0x12 || btatt.opcode == 0x52`), the headphones use BLE GATT,
 which this app does not support yet.
 
-### 5. Try them
+### 5. Try them with a custom profile
 
 Open **Advanced device settings** from the tray icon, pick the headphones, enter the channel and
 the bytes, then use **Test ON** / **Test OFF**. Turn off the phone's Bluetooth
@@ -177,7 +179,7 @@ AA EC <cmd> <data length, 2 bytes BE> <data> <checksum>
 
 Other Edifier models may use the same framing with different command codes.
 
-### Example: realme Buds T200 Lite
+### Example: Realme Buds T200 Lite
 
 The realme Link app uses RFCOMM channel 1 (SPP) with this framing, and no
 checksum:
@@ -201,7 +203,7 @@ AA <length of the rest> <direction, 2 bytes> <cmd> <type> <seq> <data length, 2 
 After a write the headphones also send `AA 0A 04 00 03 05 <seq> 03 00 01 06 <01/00>`
 on their own.
 
-## Build
+## Build the application
 
 Requires the .NET 10 SDK.
 
@@ -214,7 +216,7 @@ WinRT API projection).
 
 ## Disclaimer
 
-This is an unofficial project, not affiliated with or endorsed by Edifier, realme or
+This is an unofficial project, not affiliated with or endorsed by Edifier, Realme or
 any other headphone maker. Trademarks belong to their respective owners. The
 protocols were worked out by observing the Bluetooth traffic of the official
 apps; use it at your own risk.
