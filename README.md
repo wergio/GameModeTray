@@ -7,10 +7,20 @@ PC with RFCOMM. Many headphones forget the setting whenever they are switched of
 **It ships with profiles for the Edifier X2s and the Realme Buds T200 Lite**. Other headphones can be added
 from the Advanced device settings window, by entering the bytes their companion app sends: the guide below shows how to find them.
 
+## Download
+
+Get `GameModeTray.exe` from the [Releases page](https://github.com/wergio/GameModeTray/releases/latest).
+It is a single file with nothing to install: put it in a folder of your choice and start it.
+If the .NET Desktop Runtime is missing, Windows shows a message with the link to download it.
+To update, replace the file; the "Start with Windows" entry refers to the file's path.
+
+The file is not code-signed yet, so Windows SmartScreen may show "Windows protected your
+PC": choose **More info → Run anyway**.
+
 ## Requirements
 
-- Windows 10 version 2004 (build 19041) or later, with Bluetooth
-- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+- Windows 10 version 2004 (build 19041) or later, 64-bit, with Bluetooth
+- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (or later)
 - Headphones paired with the PC whose companion app talks over classic
   Bluetooth RFCOMM (SPP). BLE GATT is not supported yet (ask me if you need it, but I don't own any headphones using BLE GATT).
 
@@ -205,14 +215,18 @@ on their own.
 
 ## Build the application
 
-Requires the .NET 10 SDK.
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
-```
-dotnet publish -c Release -o publish
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1
 ```
 
-Produces `publish\GameModeTray.exe` (single file, about 25 MB because of the
-WinRT API projection).
+`publish.ps1` builds `dist\GameModeTray.exe` (single file, about 25 MB because of the WinRT
+API projection). Options:
+
+- `-Version 1.0.0` stamps a version into the exe (default: the one in the csproj).
+- `-Install` closes a running instance (`GameModeTray.exe --exit`) and copies the exe to
+  `%LOCALAPPDATA%\Programs\GameModeTray`.
 
 ## Disclaimer
 

@@ -12,6 +12,17 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- Release builds override it with the tag: tools\publish.ps1 -Version 1.0.0 -->
+    <Version>1.0.0</Version>
+    <Product>GameModeTray</Product>
+    <Authors>Daniele Vergini</Authors>
+    <Copyright>Copyright (c) 2026 Daniele Vergini</Copyright>
+    <Description>Turns on the game mode of Bluetooth headphones when they connect</Description>
+    <RepositoryUrl>https://github.com/wergio/GameModeTray</RepositoryUrl>
+    <!-- Keep ProductVersion equal to Version (no "+commit" suffix): code signing reads it. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Run on a newer .NET major when 10 is not installed. -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
   <ItemGroup>

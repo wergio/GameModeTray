@@ -41,7 +41,7 @@ sealed class TrayContext : ApplicationContext
     bool? _gameMode;     // null = state unknown
     string? _error;
 
-    public TrayContext(bool openSettings)
+    public TrayContext(bool openSettings, WaitHandle exitEvent)
     {
         var saved = AppSettings.Load();
         _firstRun = saved is null;
@@ -51,6 +51,8 @@ sealed class TrayContext : ApplicationContext
         SynchronizationContext.SetSynchronizationContext(_ui);
         // The event is raised on a thread-pool thread: marshal back to the UI thread
         _connectionChanged = (_, _) => _ui.Post(_ => OnConnectionChanged(apply: true), null);
+        // "GameModeTray.exe --exit" sets the event
+        ThreadPool.RegisterWaitForSingleObject(exitEvent, (_, _) => _ui.Post(_ => ExitThread(), null), null, Timeout.Infinite, executeOnlyOnce: true);
 
         _offItem = new ToolStripMenuItem("Turn game mode off", null, (_, _) => _ = ApplyAsync(false, automatic: false));
         var menu = new ContextMenuStrip();

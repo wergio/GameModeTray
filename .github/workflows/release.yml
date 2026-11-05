@@ -1,0 +1,94 @@
+# Pushing a tag vX.Y.Z (or vX.Y.Z-suffix for a pre-release) builds and publishes a GitHub
+# release with the single-file exe and its SHA-256 checksum.
+# Code signing through SignPath runs only when the SIGNPATH_* repository variables are set
+# (see docs/code-signing-setup.md).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TAG: ${{ github.ref_name }}
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Read the version from the tag
+        id: version
+        run: |
+          if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') {
+              throw "Tag $env:TAG is not vX.Y.Z or vX.Y.Z-suffix"
+          }
+          "version=$($Matches[1])" >> $env:GITHUB_OUTPUT
+
+      - name: Publish the exe
+        run: tools/publish.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Upload the unsigned exe
+        if: env.SIGN == 'true'
+        id: unsigned-exe
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-exe
+          path: dist/GameModeTray.exe
+
+      - name: Sign the exe
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.unsigned-exe.outputs.artifact-id }}
+          # Every signing request waits for a manual approval in SignPath.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed/exe
+
+      - name: Use the signed exe
+        if: env.SIGN == 'true'
+        run: Copy-Item signed/exe/GameModeTray.exe dist/ -Force
+
+      - name: Compute the checksum
+        run: |
+          $lines = Get-ChildItem dist -Filter *.exe | Sort-Object Name | ForEach-Object {
+              "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), ($lines -join "`n") + "`n")
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $assets = @('dist/GameModeTray.exe', 'dist/SHA256SUMS.txt')
+          # What's new (.github/changes/<version>.md, optional), then the download notes, then
+          # the SmartScreen warning while the file is unsigned; --generate-notes adds the changelog link.
+          $parts = @()
+          $changes = ".github/changes/$env:VERSION.md"
+          if (Test-Path $changes) { $parts += (Get-Content $changes -Raw -Encoding utf8).Trim() }
+          $parts += (Get-Content .github/release-notes.md -Raw -Encoding utf8).Trim()
+          if ($env:SIGN -ne 'true') { $parts += (Get-Content .github/release-notes-unsigned.md -Raw -Encoding utf8).Trim() }
+          $notes = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          [IO.File]::WriteAllText($notes, ($parts -join "`n`n") + "`n")
+          $options = @('--title', "GameModeTray $env:VERSION", '--notes-file', $notes, '--generate-notes')
+          if ($env:VERSION.Contains('-')) { $options += '--prerelease' }
+          gh release create $env:TAG @assets @options
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

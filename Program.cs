@@ -2,15 +2,27 @@ namespace GameModeTray;
 
 static class Program
 {
+    const string InstanceMutexName = @"Local\GameModeTray";
+    const string ExitEventName = @"Local\GameModeTray.Exit";
+
     [STAThread]
     static void Main(string[] args)
     {
+        // "--exit" asks the running instance to quit (used by tools\publish.ps1 -Install)
+        bool exitRequested = args.Contains("--exit");
         // Single instance: a second launch (e.g. double-clicking the exe) exits immediately
-        using var mutex = new Mutex(true, @"Local\GameModeTray", out bool first);
+        using var mutex = new Mutex(!exitRequested, InstanceMutexName, out bool first);
+        if (exitRequested)
+        {
+            if (EventWaitHandle.TryOpenExisting(ExitEventName, out var exitSignal))
+                using (exitSignal) exitSignal.Set();
+            return;
+        }
         if (!first) return;
 
+        using var exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ExitEventName);
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayContext(openSettings: args.Contains("--settings")));
+        Application.Run(new TrayContext(openSettings: args.Contains("--settings"), exitEvent));
     }
 }
 
