@@ -34,9 +34,9 @@ mode is turned on within a few seconds.
 
 - Icon: grey = headphones not connected, green = game mode on,
   orange = game mode off or error.
-- Menu (right click): headphones name and state, turn game mode on/off, enable
-  automatically on connect, start with Windows, advanced device settings, exit.
-  Double click = turn on.
+- Menu (right click): headphones name and state, turn game mode on/off, check
+  current status, enable automatically on connect, start with Windows, advanced
+  device settings, exit. Double click = turn on.
 - Settings are stored in `%APPDATA%\GameModeTray\settings.json`, the log in
   `%LOCALAPPDATA%\GameModeTray\log.txt`.
 
@@ -89,7 +89,7 @@ needed. Currently supported headphones:
 | headphones | file |
 |---|---|
 | Edifier X2s | [`edifier-x2s.json`](profiles/edifier-x2s.json) |
-| realme Buds T200 Lite | [`realme-buds-t200-lite.json`](profiles/realme-buds-t200-lite.json) |
+| Realme Buds T200 Lite | [`realme-buds-t200-lite.json`](profiles/realme-buds-t200-lite.json) |
 
 Got it working with other headphones? Export the profile and open a pull request
 adding it to `profiles/`: it will be offered as a preset from the next release.
@@ -157,7 +157,7 @@ state replies. Packets the app sends once at startup are often state queries.
 If no packet repeats exactly, look for one byte that grows by one with every
 message the app sends: it is a sequence number, and the ON/OFF packets are the
 ones that are equal apart from it. Many headphones only echo it back, so a fixed
-value works (try it with **Test ON**); the realme example below is one of them.
+value works (try it with **Test ON**); the Realme example below is one of them.
 
 If nothing shows up in RFCOMM but you see ATT writes
 (`btatt.opcode == 0x12 || btatt.opcode == 0x52`), the headphones use BLE GATT,

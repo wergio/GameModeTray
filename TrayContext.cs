@@ -20,6 +20,7 @@ sealed class TrayContext : ApplicationContext
     readonly ToolStripLabel _title = new();
     readonly ToolStripMenuItem _status = new() { Enabled = false };
     readonly ToolStripMenuItem _offItem;
+    readonly ToolStripMenuItem _checkItem;
     readonly ToolStripMenuItem _auto = new("Enable automatically on connect") { CheckOnClick = true };
     readonly ToolStripMenuItem _startup = new("Start with Windows") { CheckOnClick = true };
     readonly Icon _iconIdle = MakeIcon(Color.FromArgb(128, 128, 128));
@@ -55,6 +56,7 @@ sealed class TrayContext : ApplicationContext
         ThreadPool.RegisterWaitForSingleObject(exitEvent, (_, _) => _ui.Post(_ => ExitThread(), null), null, Timeout.Infinite, executeOnlyOnce: true);
 
         _offItem = new ToolStripMenuItem("Turn game mode off", null, (_, _) => _ = ApplyAsync(false, automatic: false));
+        _checkItem = new ToolStripMenuItem("Check current status", null, (_, _) => _ = CheckStateAsync());
         var menu = new ContextMenuStrip();
         _title.Font = new Font(menu.Font, FontStyle.Bold);
         menu.Items.Add(_title);
@@ -62,6 +64,7 @@ sealed class TrayContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Turn game mode on", null, (_, _) => _ = ApplyAsync(true, automatic: false));
         menu.Items.Add(_offItem);
+        menu.Items.Add(_checkItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_auto);
         menu.Items.Add(_startup);
@@ -127,6 +130,7 @@ sealed class TrayContext : ApplicationContext
         _error = null;
         var profile = _settings.Profile;
         _offItem.Enabled = profile.OffCommand.Trim().Length > 0;
+        _checkItem.Enabled = false;
         UpdateTray();
 
         if (profile.DeviceName.Trim().Length == 0)
@@ -160,6 +164,8 @@ sealed class TrayContext : ApplicationContext
             Fail("Invalid profile: " + ex.Message);
             return;
         }
+        // Without a state query and replies there is nothing to check
+        _checkItem.Enabled = _gameDevice.CanReadState;
 
         Log.Write($"Found {_device.Name} ({_device.BluetoothAddress:X12}), profile \"{profile.Name}\"");
         _device.ConnectionStatusChanged += _connectionChanged;
@@ -223,6 +229,49 @@ sealed class TrayContext : ApplicationContext
             }
             Log.Write($"Attempt {attempt} to read the state failed: {error}");
             if (attempt < attempts) await Task.Delay(RetryDelayMs);
+        }
+    }
+
+    /// <summary>
+    /// Menu command: asks the headphones for their current state, e.g. after game mode
+    /// was changed from the headphones themselves, which do not report it on their own.
+    /// </summary>
+    async Task CheckStateAsync()
+    {
+        var device = _gameDevice;
+        if (device is null || !Connected)
+        {
+            Notify(device is null ? _error ?? "No headphones configured." : "The headphones are not connected.", ToolTipIcon.Warning);
+            return;
+        }
+        if (!device.CanReadState || !await _busy.WaitAsync(0)) return;
+        try
+        {
+            bool? state = await Task.Run(device.ReadState);
+            if (device != _gameDevice || !Connected) return;
+            if (state is null)
+            {
+                _error = "no state reply from the headphones";
+                Log.Write("Status check failed: " + _error);
+                Notify("Could not read the game mode state: " + _error, ToolTipIcon.Warning);
+                return;
+            }
+            if (state != _gameMode) Log.Write($"Game mode is {(state.Value ? "ON" : "OFF")} (status check)");
+            _gameMode = state;
+            _verified = true;
+            _error = null;
+            Notify(state.Value ? "Game mode is ON." : "Game mode is OFF.", ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            Log.Write("Status check failed: " + ex.Message);
+            Notify("Could not read the game mode state: " + ex.Message, ToolTipIcon.Warning);
+        }
+        finally
+        {
+            _busy.Release();
+            UpdateTray();
         }
     }
 
