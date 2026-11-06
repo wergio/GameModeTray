@@ -1,18 +1,18 @@
 # GameModeTray
 
-A small Windows system tray app that automatically turns on the **game mode**
-(low-latency mode) of your Bluetooth headphones every time they connect to the
-PC with RFCOMM. Many headphones forget the setting whenever they are switched off.
+A Windows system tray app that automatically turns on the **game mode**
+(low-latency mode) of your Bluetooth headphones every time they connect to your
+PC. Usefull because many headphones forget the setting whenever they are switched off.
 
 **It ships with profiles for the Edifier X2s and the Realme Buds T200 Lite**. Other headphones can be added
-from the Advanced device settings window, by entering the bytes their companion app sends: the guide below shows how to find them.
+from the Advanced device settings window, with the [guided detection](#option-a-guided-detection) (experimental)
+or by entering the bytes their companion app sends: the [manual guide](#option-b-manual-procedure) below shows how to find them.
 
 ## Download
 
 Get `GameModeTray.exe` from the [Releases page](https://github.com/wergio/GameModeTray/releases/latest).
 It is a single file with nothing to install: put it in a folder of your choice and start it.
-If the .NET Desktop Runtime is missing, Windows shows a message with the link to download it.
-To update, replace the file; the "Start with Windows" entry refers to the file's path.
+To update, replace the file.
 
 The file is not code-signed yet, so Windows SmartScreen may show "Windows protected your
 PC": choose **More info → Run anyway**.
@@ -22,7 +22,8 @@ PC": choose **More info → Run anyway**.
 - Windows 10 version 2004 (build 19041) or later, 64-bit, with Bluetooth
 - [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (or later)
 - Headphones paired with the PC whose companion app talks over classic
-  Bluetooth RFCOMM (SPP). BLE GATT is not supported yet (ask me if you need it, but I don't own any headphones using BLE GATT).
+  Bluetooth RFCOMM (SPP). 
+- BLE GATT is not supported yet (ask me if you need it, but I don't own any headphones using this protocol).
 
 ## Usage
 
@@ -36,21 +37,9 @@ mode is turned on within a few seconds.
   orange = game mode off or error.
 - Menu (right click): headphones name and state, turn game mode on/off, check
   current status, enable automatically on connect, start with Windows, advanced
-  device settings, exit. Double click = turn on.
+  device settings, exit. Double click = switch state.
 - Settings are stored in `%APPDATA%\GameModeTray\settings.json`, the log in
   `%LOCALAPPDATA%\GameModeTray\log.txt`.
-
-## How it works
-
-- Finds the headphones among the paired Bluetooth devices by name, then listens
-  for their connect/disconnect event (WinRT
-  `BluetoothDevice.ConnectionStatusChanged`), no polling.
-- On connection it waits, opens an RFCOMM socket on the configured channel,
-  sends the ON command and checks the state replies, retrying if needed; on
-  failure it shows a notification.
-- With "enable automatically on connect" turned off it changes nothing and only
-  reads the current state (when the profile has a state query and replies), so
-  the icon still shows whether game mode is on.
 
 ## Advanced device settings
 
@@ -77,8 +66,9 @@ With the state replies filled in, the app confirms that game mode is really on
 and retries otherwise. Without them, a command counts as done once it is sent.
 
 **Test ON**, **Test OFF** and **Read state** try the values in the form before
-you save them and show the bytes sent and received. **Import** and **Export**
-load and save a profile as JSON.
+you save them and show the bytes sent and received. **Start the procedure to
+detect new headsets** starts the [guided detection](#option-a-guided-detection).
+**Import** and **Export** load and save a profile as JSON.
 
 ## Profiles
 
@@ -86,23 +76,50 @@ Ready-made profiles are in [`profiles/`](profiles/). They are built into the
 exe: pick yours from **Preset** in the advanced device settings, no download
 needed. Currently supported headphones:
 
-| headphones | file |
-|---|---|
-| Edifier X2s | [`edifier-x2s.json`](profiles/edifier-x2s.json) |
-| Realme Buds T200 Lite | [`realme-buds-t200-lite.json`](profiles/realme-buds-t200-lite.json) |
+| headphones | file | provided by |
+|---|---|---|
+| Edifier X2s | [`edifier-x2s.json`](profiles/edifier-x2s.json) | Daniele Vergini |
+| Realme Buds T200 Lite | [`realme-buds-t200-lite.json`](profiles/realme-buds-t200-lite.json) | Daniele Vergini |
 
-Got it working with other headphones? Export the profile and open a pull request
-adding it to `profiles/`: it will be offered as a preset from the next release.
+Got it working with other headphones? Press **Send profile via GitHub PR** in the advanced device
+settings: GitHub opens a Pull Request with the file ready, so you only have to confirm (you need a GitHub account). It will be offered as a preset from the next release.
 
 ## How to add support for other headphones
 
 The idea: record the Bluetooth traffic while the official app toggles game mode,
-then find the bytes that change. You need an Android phone, the headphones'
-companion app, [Wireshark](https://www.wireshark.org/) and
-[adb](https://developer.android.com/tools/releases/platform-tools) on the PC.
-You can use agentic AI (like Claude Code) to do this procedure for you.
+then find the bytes that change. Either way you need an Android phone with the
+headphones' companion app installed and a USB cable.
 
-### 1. Turn on the Bluetooth log on the phone
+- **[Option A: guided detection (experimental)](#option-a-guided-detection)**: the app walks you
+  through it, finds the commands in the log and tries them.
+- **[Option B: manual procedure](#option-b-manual-procedure)**: you go through the
+  log yourself with Wireshark, for full control or when option A finds nothing.
+
+### Option A: guided detection
+
+Open **Advanced device settings** and press **Start the procedure to detect new
+headsets**. The list shows the paired headphones with their state, whether a
+profile is present and their connection type. **Start detection procedure**
+appears next to the ones that are connected and need detection.
+
+The app then takes you through these steps:
+
+1. **Android tools**: downloads ADB from Google.
+2. **Phone**: enable USB debugging and checks the phone is connected with a USB cable.
+3. **Bluetooth log**: turn on HCI snoop log and checks is really running.
+4. **Headphones**: instruct to move them from the PC to the phone.
+5. **Recording**: the app tells you when to change game mode in the companion app.
+6. **Analysis**: gets the phone's bug report, reads the Bluetooth log then deletes the
+   report and puts the log setting back.
+7. **Test on the PC**: tries the commands on the headphones on PC and fills in the new custom profile, if it's working you press **Save**.
+
+### Option B: manual procedure
+
+You also need [adb](https://developer.android.com/tools/releases/platform-tools)
+and [Wireshark](https://www.wireshark.org/) on the PC. You can use agentic AI
+(like Claude Code) to do this procedure for you.
+
+#### 1. Turn on the Bluetooth log on the phone
 
 1. **Settings → About phone**, tap **Build number** 7 times to unlock the
    developer options.
@@ -111,14 +128,14 @@ You can use agentic AI (like Claude Code) to do this procedure for you.
    payloads).
 3. Turn Bluetooth off and on again: the log starts with the new session.
 
-### 2. Record the toggle
+#### 2. Record the toggle
 
 1. Connect the headphones to the phone and open the companion app.
 2. Wait a few seconds, then turn game mode **on and off 3 times**, about 5
    seconds apart. Change nothing else, so the log stays clean.
 3. Note the start and end time on the phone's clock.
 
-### 3. Get the log
+#### 3. Get the log
 
 Connect the phone over USB, accept the "Allow USB debugging?" prompt, then:
 
@@ -132,7 +149,7 @@ Open the zip and extract `btsnoop_hci.log`. On most phones it is in
 
 Remember to set the snoop log back to **Disabled** when you are done.
 
-### 4. Find the commands
+#### 4. Find the commands
 
 Open `btsnoop_hci.log` in Wireshark and apply this display filter, which shows
 the data sent by the phone over RFCOMM:
@@ -163,14 +180,14 @@ If nothing shows up in RFCOMM but you see ATT writes
 (`btatt.opcode == 0x12 || btatt.opcode == 0x52`), the headphones use BLE GATT,
 which this app does not support yet.
 
-### 5. Try them with a custom profile
+#### 5. Try them with a custom profile
 
 Open **Advanced device settings** from the tray icon, pick the headphones, enter the channel and
 the bytes, then use **Test ON** / **Test OFF**. Turn off the phone's Bluetooth
 first: if the phone is still connected, the companion app may keep the channel
 busy. When it works, **Save**.
 
-### Example: Edifier X2s
+### Example 1: Edifier X2s strings
 
 The Edifier Connect app uses RFCOMM channel 2 with this framing:
 
@@ -189,7 +206,7 @@ AA EC <cmd> <data length, 2 bytes BE> <data> <checksum>
 
 Other Edifier models may use the same framing with different command codes.
 
-### Example: Realme Buds T200 Lite
+### Example 2: Realme Buds T200 Lite strings
 
 The realme Link app uses RFCOMM channel 1 (SPP) with this framing, and no
 checksum:
@@ -213,7 +230,7 @@ AA <length of the rest> <direction, 2 bytes> <cmd> <type> <seq> <data length, 2 
 After a write the headphones also send `AA 0A 04 00 03 05 <seq> 03 00 01 06 <01/00>`
 on their own.
 
-## Build the application
+## Build the application yourself
 
 You need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
@@ -221,12 +238,7 @@ You need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 powershell -ExecutionPolicy Bypass -File tools\publish.ps1
 ```
 
-`publish.ps1` builds `dist\GameModeTray.exe` (single file, about 25 MB because of the WinRT
-API projection). Options:
-
-- `-Version 1.0.0` stamps a version into the exe (default: the one in the csproj).
-- `-Install` closes a running instance (`GameModeTray.exe --exit`) and copies the exe to
-  `%LOCALAPPDATA%\Programs\GameModeTray`.
+`publish.ps1` builds `dist\GameModeTray.exe` (single file). Options:
 
 ## Disclaimer
 

@@ -47,7 +47,7 @@ sealed class GameModeDevice
     public bool? SetGameMode(bool on)
     {
         var command = on ? _on : _off ?? throw new InvalidOperationException("no OFF command configured");
-        using var socket = Connect();
+        using var socket = Connect(_address, _channel);
         // Some headphones report the new state on their own, otherwise ask for it
         var state = MatchState(Exchange(socket, command, CanVerify ? 1000 : 500));
         if (state is null && CanVerify && _query is not null)
@@ -61,7 +61,7 @@ sealed class GameModeDevice
     public bool? ReadState()
     {
         if (_query is null) throw new InvalidOperationException("no state query configured");
-        using var socket = Connect();
+        using var socket = Connect(_address, _channel);
         return MatchState(Exchange(socket, _query, 1500));
     }
 
@@ -76,12 +76,12 @@ sealed class GameModeDevice
         return on > off;
     }
 
-    Socket Connect()
+    public static Socket Connect(ulong address, int channel)
     {
         var socket = new Socket(BluetoothEndPoint.Family, SocketType.Stream, BluetoothEndPoint.Rfcomm);
         try
         {
-            socket.Connect(new BluetoothEndPoint(_address, _channel));
+            socket.Connect(new BluetoothEndPoint(address, channel));
             socket.ReceiveTimeout = 300;
             return socket;
         }

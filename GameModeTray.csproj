@@ -12,8 +12,8 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
-    <!-- Release builds override it with the tag: tools\publish.ps1 -Version 1.0.0 -->
-    <Version>1.0.0</Version>
+    <!-- Release builds override it with the tag: tools\publish.ps1 -Version 1.1.0 -->
+    <Version>1.1.0</Version>
     <Product>GameModeTray</Product>
     <Authors>Daniele Vergini</Authors>
     <Copyright>Copyright (c) 2026 Daniele Vergini</Copyright>
@@ -23,6 +23,7 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <!-- Run on a newer .NET major when 10 is not installed. -->
     <RollForward>Major</RollForward>
+    <ApplicationIcon>GameModeTray.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

@@ -19,6 +19,7 @@ sealed class TrayContext : ApplicationContext
     readonly NotifyIcon _tray = new();
     readonly ToolStripLabel _title = new();
     readonly ToolStripMenuItem _status = new() { Enabled = false };
+    readonly ToolStripMenuItem _onItem;
     readonly ToolStripMenuItem _offItem;
     readonly ToolStripMenuItem _checkItem;
     readonly ToolStripMenuItem _auto = new("Enable automatically on connect") { CheckOnClick = true };
@@ -55,6 +56,7 @@ sealed class TrayContext : ApplicationContext
         // "GameModeTray.exe --exit" sets the event
         ThreadPool.RegisterWaitForSingleObject(exitEvent, (_, _) => _ui.Post(_ => ExitThread(), null), null, Timeout.Infinite, executeOnlyOnce: true);
 
+        _onItem = new ToolStripMenuItem("Turn game mode on", null, (_, _) => _ = ApplyAsync(true, automatic: false));
         _offItem = new ToolStripMenuItem("Turn game mode off", null, (_, _) => _ = ApplyAsync(false, automatic: false));
         _checkItem = new ToolStripMenuItem("Check current status", null, (_, _) => _ = CheckStateAsync());
         var menu = new ContextMenuStrip();
@@ -62,7 +64,7 @@ sealed class TrayContext : ApplicationContext
         menu.Items.Add(_title);
         menu.Items.Add(_status);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Turn game mode on", null, (_, _) => _ = ApplyAsync(true, automatic: false));
+        menu.Items.Add(_onItem);
         menu.Items.Add(_offItem);
         menu.Items.Add(_checkItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -78,7 +80,7 @@ sealed class TrayContext : ApplicationContext
         _startup.CheckedChanged += (_, _) => SetStartup(_startup.Checked);
 
         _tray.ContextMenuStrip = menu;
-        _tray.DoubleClick += (_, _) => _ = ApplyAsync(true, automatic: false);
+        _tray.DoubleClick += (_, _) => _ = ToggleAsync();
         // Notifications about a missing or invalid profile lead to the settings
         _tray.BalloonTipClicked += (_, _) => { if (_gameDevice is null) OpenSettings(); };
         _tray.Visible = true;
@@ -129,6 +131,7 @@ sealed class TrayContext : ApplicationContext
         _gameMode = null;
         _error = null;
         var profile = _settings.Profile;
+        _onItem.Enabled = profile.OnCommand.Trim().Length > 0;
         _offItem.Enabled = profile.OffCommand.Trim().Length > 0;
         _checkItem.Enabled = false;
         UpdateTray();
@@ -186,7 +189,8 @@ sealed class TrayContext : ApplicationContext
         _gameMode = null;
         _error = null;
         UpdateTray();
-        if (!Connected) return;
+        // With the settings open, stay off the headphones: the user may be testing commands on them
+        if (!Connected || _settingsForm is not null) return;
         if (apply && _auto.Checked) _ = ApplyAsync(true, automatic: true);
         // Not changing anything: just find out the current state, for the icon
         else _ = ReadStateAsync(waitForConnection: apply);
@@ -275,6 +279,39 @@ sealed class TrayContext : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Double click on the icon: switches game mode to the opposite of its current state.
+    /// Without an OFF command, or when the state is unknown, it turns it on.
+    /// </summary>
+    async Task ToggleAsync()
+    {
+        var device = _gameDevice;
+        bool isOn = device is not null && Connected && _offItem.Enabled && await CurrentStateAsync(device) == true;
+        await ApplyAsync(!isOn, automatic: false);
+    }
+
+    /// <summary>
+    /// Asks the headphones when possible: game mode can also change from the headphones
+    /// themselves, without them telling. Otherwise the last known state.
+    /// </summary>
+    async Task<bool?> CurrentStateAsync(GameModeDevice device)
+    {
+        if (!device.CanReadState || !await _busy.WaitAsync(0)) return _gameMode;
+        try
+        {
+            return await Task.Run(device.ReadState) ?? _gameMode;
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Reading the state before a toggle: " + ex.Message);
+            return _gameMode;
+        }
+        finally
+        {
+            _busy.Release();
+        }
+    }
+
     async Task ApplyAsync(bool on, bool automatic)
     {
         var device = _gameDevice;
@@ -335,7 +372,10 @@ sealed class TrayContext : ApplicationContext
             _settingsForm.Activate();
             return;
         }
-        var form = new SettingsForm(_settings.Profile, _iconOn);
+        string? notice = _settings.Profile.DeviceName.Trim().Length == 0
+            ? "No headphones detected or configured: none of the devices paired with this PC has a preset."
+            : _gameDevice is null ? _error : null;
+        var form = new SettingsForm(_settings.Profile, _iconOn, notice);
         form.FormClosed += (_, _) =>
         {
             _settingsForm = null;
@@ -404,6 +444,9 @@ sealed class TrayContext : ApplicationContext
     protected override void ExitThreadCore()
     {
         Log.Write("Exiting");
+        // ExitThread alone would skip their FormClosing, and the wizard must put the phone back as it was
+        foreach (var form in Application.OpenForms.Cast<Form>().Reverse().ToList()) form.Close();
+        DetectWizardForm.WaitForCleanUp();
         _tray.Visible = false;
         _tray.Dispose();
         base.ExitThreadCore();

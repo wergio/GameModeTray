@@ -6,7 +6,8 @@ namespace GameModeTray;
 /// <summary>Edits the headphone profile and lets the user try the commands before saving.</summary>
 sealed class SettingsForm : Form
 {
-    const string GuideUrl = "https://github.com/wergio/GameModeTray#adding-support-for-other-headphones";
+    const string RepoUrl = "https://github.com/wergio/GameModeTray";
+    const string GuideUrl = RepoUrl + "#option-b-manual-procedure";
     const string JsonFilter = "Profile (*.json)|*.json";
     const string Custom = "Custom";
 
@@ -23,14 +24,17 @@ sealed class SettingsForm : Form
         Dock = DockStyle.Fill, Font = new Font("Consolas", 9f),
     };
     readonly Button[] _testButtons;
+    readonly Button _send;
+    readonly FlowLayoutPanel _detected = new() { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Visible = false, Margin = new Padding(0, 6, 0, 0) };
     bool _filling;   // true while the fields are filled in by code, not by the user
 
     public Profile Result { get; private set; }
 
-    public SettingsForm(Profile profile, Icon icon)
+    /// <param name="notice">Problem to point out at the top of the window, if any.</param>
+    public SettingsForm(Profile profile, Icon icon, string? notice)
     {
         Result = profile;
-        Text = "GameModeTray - Advanced device settings";
+        Text = $"GameModeTray {Application.ProductVersion} - Advanced device settings";
         Icon = icon;
         StartPosition = FormStartPosition.CenterScreen;
         MinimizeBox = false;
@@ -41,14 +45,29 @@ sealed class SettingsForm : Form
         var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(10) };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        if (!string.IsNullOrEmpty(notice))
+        {
+            AddWide(grid, new Label
+            {
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                MaximumSize = new Size(LogicalToDeviceUnits(590), 0),
+                Margin = new Padding(3, 0, 3, 10),
+                Padding = new Padding(6),
+                BackColor = SystemColors.Info,
+                ForeColor = SystemColors.InfoText,
+                Font = new Font(Font, FontStyle.Bold),
+                Text = notice,
+            });
+        }
         AddWide(grid, new Label
         {
             AutoSize = true,
             MaximumSize = new Size(LogicalToDeviceUnits(590), 0),
             Margin = new Padding(3, 0, 3, 10),
-            Text = "GameModeTray turns on the game mode of your headphones every time they connect. " +
-                   "Pick your headphones from the presets. If they are not listed, enter the commands " +
-                   "their companion app sends (see the guide below) and try them with the test buttons before saving.",
+            Text = "GameModeTray turns on the game mode (low latency) of your headphones every time they connect to the PC. " +
+                   "Pick your headphones from the presets. If they are not listed, enter the hex commands " +
+                   "their companion app sends (see the guide below to retrieve) and try them with the test buttons before saving.",
         });
 
         _preset.Items.Add(Custom);
@@ -96,13 +115,52 @@ sealed class SettingsForm : Form
         tests.Controls.AddRange(_testButtons);
         AddWide(grid, tests);
         AddWide(grid, _output, fill: true);
-        var guide = new LinkLabel { Text = "How to find the commands of your headphones", AutoSize = true, Margin = new Padding(3, 6, 3, 3) };
+        _detected.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            ForeColor = Color.Firebrick,
+            Font = new Font(Font, FontStyle.Bold),
+            Text = "Press Save to keep them.",
+        });
+        _detected.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            MaximumSize = new Size(LogicalToDeviceUnits(420), 0),
+            Text = "If they work, press Send profile via GitHub PR so that your headset can be included in the next releases.",
+        });
+        AddWide(grid, _detected);
+        var detect = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
+        var start = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0) };
+        start.Controls.Add(new Label
+        {
+            AutoSize = true,
+            ForeColor = Color.Firebrick,
+            Font = new Font(Font, FontStyle.Bold),
+            Text = "Experimental",
+        });
+        start.Controls.Add(NewButton("Start the procedure to detect new headsets", (_, _) => DetectCommands()));
+        detect.Controls.Add(start);
+        detect.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            MaximumSize = new Size(LogicalToDeviceUnits(330), 0),
+            Text = "You will need an Android phone with the companion app of your headset installed, and a USB cable.",
+        });
+        AddWide(grid, detect);
+        var guide = new LinkLabel { Text = "or do the procedure yourself manually", AutoSize = true, Margin = new Padding(3, 6, 3, 3) };
         guide.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo(GuideUrl) { UseShellExecute = true });
         AddWide(grid, guide);
 
         var left = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         left.Controls.Add(NewButton("Import...", (_, _) => Import()));
         left.Controls.Add(NewButton("Export...", (_, _) => Export()));
+        _send = NewButton("Send profile via GitHub PR", (_, _) => SendProfile());
+        left.Controls.Add(_send);
+        // Only a custom profile is worth sending: the presets are already in the app
+        _preset.SelectedIndexChanged += (_, _) => _send.Visible = _preset.SelectedItem is not Profile;
         var right = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var cancel = NewButton("Cancel", (_, _) => Close());
         right.Controls.Add(cancel);
@@ -255,6 +313,16 @@ sealed class SettingsForm : Form
         _ => $"The headphones report game mode {(state.Value ? "ON" : "OFF")}.",
     };
 
+    void DetectCommands()
+    {
+        using var list = new DeviceListForm(Icon!);
+        if (list.ShowDialog(this) != DialogResult.OK || list.Result is null) return;
+        Fill(list.Result);
+        SelectPreset(list.Result);
+        Append($"Filled in the commands detected for {list.Result.DeviceName}.");
+        _detected.Visible = true;
+    }
+
     void Save()
     {
         try { Result = ReadForm(); }
@@ -286,19 +354,38 @@ sealed class SettingsForm : Form
 
     void Export()
     {
-        Profile p;
-        try { p = ReadForm(); }
-        catch (FormatException ex)
-        {
-            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        var slug = new string(p.Name.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
-        using var dialog = new SaveFileDialog { Filter = JsonFilter, FileName = slug + ".json" };
+        if (ReadFormOrWarn() is not Profile p) return;
+        using var dialog = new SaveFileDialog { Filter = JsonFilter, FileName = FileNameOf(p) };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         File.WriteAllText(dialog.FileName, p.ToJson());
         Append("Exported " + dialog.FileName);
     }
+
+    /// <summary>
+    /// Opens GitHub's new file page with the profile already filled in. Nothing is sent until the
+    /// user confirms there: GitHub makes the fork and the pull request, so the app needs no token.
+    /// </summary>
+    void SendProfile()
+    {
+        if (ReadFormOrWarn() is not Profile p) return;
+        string url = $"{RepoUrl}/new/main/profiles?filename={Uri.EscapeDataString(FileNameOf(p))}" +
+                     $"&value={Uri.EscapeDataString(p.ToJson())}&message={Uri.EscapeDataString($"Added {p.Name} profile")}";
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        Append("GitHub opened with the profile ready. Sign in, press Commit changes and then Create pull request: nothing is sent before that.");
+    }
+
+    Profile? ReadFormOrWarn()
+    {
+        try { return ReadForm(); }
+        catch (FormatException ex)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return null;
+        }
+    }
+
+    static string FileNameOf(Profile p) =>
+        new string(p.Name.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-') + ".json";
 
     void Append(string line) => _output.AppendText(line + Environment.NewLine);
 

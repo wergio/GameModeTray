@@ -28,6 +28,8 @@ static class Hex
 
     public static string Format(IEnumerable<byte> bytes) => string.Join(" ", bytes.Select(b => b.ToString("X2")));
 
+    public static string FormatPattern(IEnumerable<int> pattern) => string.Join(" ", pattern.Select(b => b == Any ? "??" : b.ToString("X2")));
+
     /// <summary>Position of the last occurrence of pattern in data, or -1.</summary>
     public static int LastIndexOf(IReadOnlyList<byte> data, int[] pattern)
     {

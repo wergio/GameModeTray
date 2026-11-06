@@ -4,10 +4,33 @@ static class Program
 {
     const string InstanceMutexName = @"Local\GameModeTray";
     const string ExitEventName = @"Local\GameModeTray.Exit";
+    const string Help =
+        "GameModeTray.exe [option]\n\n" +
+        "--settings\n    Open the advanced device settings at startup\n\n" +
+        "--detect-all\n    Allow detecting the commands of any connected device, even if already supported\n\n" +
+        "--load-log\n    Offer to load a saved btsnoop log or bug report in the detection, skipping the phone steps\n\n" +
+        "--exit\n    Close the running instance\n\n" +
+        "--help\n    Show this list";
+
+    /// <summary>"--detect-all": the detection is offered for every connected device.</summary>
+    public static bool DetectAll { get; private set; }
+
+    /// <summary>"--load-log": the detection also offers to load a saved log.</summary>
+    public static bool LoadLog { get; private set; }
 
     [STAThread]
     static void Main(string[] args)
     {
+        // It is a windowed app with no console to write to
+        if (args.Any(a => a is "--help" or "-h" or "/?"))
+        {
+            ApplicationConfiguration.Initialize();
+            MessageBox.Show(Help, "GameModeTray", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        DetectAll = args.Contains("--detect-all");
+        LoadLog = args.Contains("--load-log");
+
         // "--exit" asks the running instance to quit (used by tools\publish.ps1 -Install)
         bool exitRequested = args.Contains("--exit");
         // Single instance: a second launch (e.g. double-clicking the exe) exits immediately
